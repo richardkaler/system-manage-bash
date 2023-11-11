@@ -1,0 +1,164 @@
+#!/bin/bash 
+
+#Sorts mount points by format type, then totals the amount of available storage space spread out so that the admin or end user has an easier way to calculate how much space is actually available 
+#This helps a lot in an environment where there is only one internal drive - which may be relatively small, depending on the size of the overall network and storage spread in which it resides 
+#Either way, there must be a way to deal with file sizes or space available in less than the gigabyte range 
+
+#Creates a function to convert the various read-outs into a format that can be easily digested by the end-user. Some drives have only Megabytes of total space - though there are few of those these days...
+totalamnt() {
+  sum=0
+  while IFS= read -r item; do
+    size=$(echo "$item" | sed 's/.$//')  # Remove the last character (the percentage sign)
+    unit=$(echo "$item" | sed 's/[0-9.]//g')  # Extract the unit (e.g., G, T, M)
+
+    # Convert sizes to kilobytes for consistent unit
+    case "$unit" in
+      G) size_kb=$(echo "$size * 1024 * 1024" | bc) ;;
+      T) size_kb=$(echo "$size * 1024 * 1024 * 1024" | bc) ;;
+      M) size_kb=$(echo "$size * 1024" | bc) ;;  # Convert megabytes to kilobytes
+      *) size_kb=$size ;;
+    esac
+
+  rounded_size_kb=$(echo "scale=0; ${size_kb:-0} / 1" | bc)
+  ((sum += rounded_size_kb))
+  done < <(df -hT | grep -v Avail | grep -v tmpfs | grep -v "/dev/fuse" | awk '{ print $5 }')
+
+ sum_gb=$(echo "$sum / 1024 / 1024" | bc) > /dev/null
+ if (( sum_gb > 0 )); then
+ echo Total amount of free space: "${sum_gb} GB"
+ fi
+}
+
+
+if [[ "$1" == "-h" ]]; then
+    echo "Only one argument is possible" #this is actually at this point irrelevant. It can be commented out or left ... I will include my earlier code which it applied to - but at this point it's extraneous
+    echo "Try \"mountedtotals mounts\""
+    exit 0
+fi
+
+mntfind() {
+find /mnt -mindepth 1 -maxdepth 1 #Find common mount points under /mnt
+}
+
+mntmedia() {
+    find /media -mindepth 1 -maxdepth 1 #Find common mount points under /media 
+}
+
+mntdevmapper() {
+    find /dev/mapper -mindepth 1 -maxdepth 1 #Find common mount points by the Linux psuedo file system folder - and these are not actually files - at least not in the way a Windows user would think of them
+} #NOTE: For anyone who wants to know why Linux users say, "everything is a file" this is a good place to look if you want to understand it. 
+#Observe that the locations under /dev/mapper are actually sym links
+
+
+#This if block does nothing without the code I commented out near the bottom. If you uncomment that code, again, this is relevant. If not, it won't do anything for you. Well, unless you want ideas for 
+#How to create arguments and extend the functionality of shell scripts 
+if [[ "$1" == "mounts" ]]; then
+echo "The following external mount points have been detected though others may also be present: "
+echo ============================
+mntfind "$@"
+echo ============================
+mntmedia "$@"
+
+echo ============================
+mntdevmapper "$@"
+else
+
+
+#Calculate Veracrypt mounts - and you can change this to something else. I use Veracrypt and Bitlocker to encrypt all of my assets. I don't use anything else. There are many encryption software tools 
+#to chose from. This is how I rock out though. 
+
+veracryptmnt() {
+    var=$(sudo mount | grep veracrypt | awk '{ print $3 }' | grep -v tmp)
+echo "$var" | while IFS= read -r drive
+do
+    df -hT "$drive" | grep veracrypt
+done
+}
+
+#I feel like this is useful if you want to understand how drives are formatted, then separated and some admins may want to keep track of this closely 
+#Take note: Only one of the below formats is a default Linux format and that's exfat. Exfat is great if you want something that will run on every OS. However, if I'm not mistaken, with some versions 
+#of Linux, you have to install an extension to use an exFat drive. I wrote this on Ubuntu which meant no such extension is required 
+
+#echo ==================================
+drivescalc() {
+echo "$(df -hT | head -1)"
+echo Drives formatted in native ext4:
+echo ==================================
+df -hT | grep ext4
+echo Drives formatted with exfat:
+echo ==================================
+df -hT | grep exfat
+echo Drives encrypted with Bitlocker:
+echo ==================================
+df -hT | grep bitlk #Short for Bitlocker - and, yes, contrary to what some folks believe, Bitlocker will mount to Linux - and you don't need dislocker to do that. In fact, at least with Ubuntu - and 
+echo Drives encrypted with Veracrypt: #... I think Debian too, a prompt will pop up asking the end user wants to decrypt the drive with a password. There isn't a lot of info on how that works though and I 
+echo ================================== #should create a video that explains it 
+veracryptmnt
+}
+drivescalc #"$@" This runs the function - that's all. If you know Bash, you know that $@ means roughly, "all of the arguments". I removed it because there are no params but originally it was present 
+fi #If you use functions a lot in Bash, it's good to pay close attention into routine habits and practices. Almost all of my scripts have arguments so I oftentimes have redundant code forgetting that 
+#the current script which pertains to my project has no param 
+echo ==================================
+totalamnt
+
+
+
+
+
+
+#echo "NOTE: This script will not calculate drives over 999 GB" #Yes it will. Howevever. I was feeling less ambitious when I first wrote this. That echo statement was true about three days ago as of this 
+#writing on Nov 11th, early morning. 
+
+
+#NOTE: There may be some errors here but either way - you only need this if you specifically want a help menu. With the help menu, if you include this, you can isolate the mount points using the 
+#\"mounts\" argument. I decided everything else is more-or-less a distracton so I commented this out after using the script for a few days and only kept the part of the script that is essential 
+
+#df -
+
+#echo --------------------------------------------------
+#
+#
+#mntmounted() {
+#find /media -mindepth 1 -maxdepth 1 -type d  | while IFS= read -r drive
+#do
+#rootval=$(df -h "/"  | awk '{ print $1 }' | tail -1)
+#pushd "$drive" > /dev/null || return
+#varpoint=$(df -h "$PWD" | tail -1 | awk '{ print $1 }')
+#if  [[ "$varpoint" == "/dev/mapper/vgubuntu-root" ]]; then
+#echo > /dev/null
+#else
+#outputsize=$(df -h "$PWD")
+#if ! [[ "$rootval" == "$outputsize" ]]; then
+#echo "$outputsize"
+#fi
+#echo =========================
+#fi
+#done
+#}
+#mntmounted
+
+#echo Unable to determine the precise mount details of some of the following
+#mntvalmount() {
+#find /mnt -mindepth 1 -maxdepth 1 -type d  | while IFS= read -r drive
+#do
+#rootval=$(df -h "/"  | awk '{ print $1 }' | tail -1)
+#pushd "$drive" > /dev/null || return
+#varpoint=$(df -h "$PWD" | tail -1 | awk '{ print $1 }')
+#varcontents=$(ls -l "$drive")
+#if  [[ "$varpoint" == "/dev/mapper/vgubuntu-root" && -n "$varcontents" ]]; then
+#echo Found the following data on "$drive"
+#echo "$varcontents"
+#else
+#outputsize=$(df -h "$PWD")
+#if ! [[ "$rootval" == "$outputsize" ]]; then
+#echo "$outputsize"
+#fi
+#echo =========================
+#fi
+#done
+#}
+#
+#mntvalmount
+#
+#lsblk | grep /media #| sed s'/total 0//g'
+#lsblk | grep /mnt
